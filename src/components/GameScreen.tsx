@@ -10,6 +10,7 @@ type GameScreenProps = {
   gameState: GameState
   settings: Settings
   isLoading: boolean
+  streamingStoryText: string
   isHistoryOpen: boolean
   isReadingMode: boolean
   onSelectChoice: (choice: Choice) => void
@@ -20,20 +21,20 @@ type GameScreenProps = {
   onOpenQuitMenu: () => void
 }
 
-export function GameScreen({ gameState, settings, isLoading, isHistoryOpen, isReadingMode, onSelectChoice, onSubmitCustomAction, onToggleHistory, onToggleReadingMode, onOpenSettings, onOpenQuitMenu }: GameScreenProps) {
+export function GameScreen({ gameState, settings, isLoading, streamingStoryText, isHistoryOpen, isReadingMode, onSelectChoice, onSubmitCustomAction, onToggleHistory, onToggleReadingMode, onOpenSettings, onOpenQuitMenu }: GameScreenProps) {
   const showWriteMode = settings.aiModeEnabled
   const [activeMode, setActiveMode] = useState<ActionMode>('paths')
   const [isResourcesOpen, setIsResourcesOpen] = useState(false)
   const visibleMode = showWriteMode ? activeMode : 'paths'
 
   return (
-    <div className={`grid w-full gap-5 py-2 ${isReadingMode ? 'lg:grid-cols-1' : 'lg:grid-cols-[18rem_minmax(0,1fr)]'}`}>
-      <aside className={`order-2 hidden content-start gap-5 lg:order-1 lg:grid ${isReadingMode ? 'lg:hidden' : ''}`}>
+    <div className={`grid w-full gap-5 py-2 lg:min-h-0 ${isReadingMode ? 'lg:grid-cols-1' : 'lg:grid-cols-[18rem_minmax(0,1fr)]'}`}>
+      <aside className={`order-2 hidden min-h-0 content-start gap-5 lg:order-1 lg:grid ${isReadingMode ? 'lg:hidden' : 'lg:max-h-full lg:grid-rows-[auto_minmax(0,1fr)]'}`}>
         <PlayerStats player={gameState.player} />
         <HistoryLog history={gameState.history} isOpen={isHistoryOpen} onToggle={onToggleHistory} />
       </aside>
 
-      <section className={`order-1 flex min-h-[calc(100svh-2.5rem)] min-w-0 flex-col gap-5 pb-50 lg:pb-0 ${isReadingMode ? '' : 'lg:order-2'}`}>
+      <section className={`order-1 flex min-h-[calc(100svh-2.5rem)] min-w-0 flex-col gap-5 pb-50 lg:min-h-0 lg:pb-0 ${isReadingMode ? '' : 'lg:order-2'}`}>
         <MobileResourceBar player={gameState.player} onOpen={() => setIsResourcesOpen(true)} />
 
         <SessionHeader onOpenSettings={onOpenSettings} onOpenQuitMenu={onOpenQuitMenu} />
@@ -41,6 +42,9 @@ export function GameScreen({ gameState, settings, isLoading, isHistoryOpen, isRe
         <div className="min-h-0 flex-1">
           <StoryPanel
             text={gameState.scene.text}
+            streamingText={streamingStoryText}
+            isStreaming={isLoading && Boolean(streamingStoryText)}
+            isLoading={isLoading && !streamingStoryText}
             chapter={gameState.session.chapter}
             turn={gameState.session.turn}
             settings={settings}

@@ -14,7 +14,9 @@ export type CharacterArchetype = {
   description: string
   statBonus: Partial<Record<StatKey, number>>
   startingItem: string
+  image: string
 }
+
 
 export type CharacterDraft = {
   name: string
@@ -70,12 +72,21 @@ export type SessionMetadata = {
   turn: number
 }
 
+export type GameOverReason = 'health' | 'energy' | 'sanity' | 'ending'
+
+export type GameOverState = {
+  reason: GameOverReason
+  title: string
+  message: string
+}
+
 export type GameState = {
   phase: GamePhase
   scene: SceneState
   player: PlayerStatsModel
   history: HistoryEntry[]
   session: SessionMetadata
+  gameOver?: GameOverState | null
 }
 
 export type EngineResult = {

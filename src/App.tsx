@@ -1,6 +1,7 @@
 import { AppShell } from './components/AppShell'
 import { GameScreen } from './components/GameScreen'
-import { LoadingOverlay } from './components/LoadingOverlay'
+import { GameOverModal } from './components/GameOverModal'
+// import { LoadingOverlay } from './components/LoadingOverlay'
 import { QuitGameModal } from './components/QuitGameModal'
 import { SettingsModal } from './components/SettingsModal'
 import { StartScreen } from './components/StartScreen'
@@ -16,6 +17,7 @@ function App() {
           gameState={engine.gameState}
           settings={engine.settings}
           isLoading={engine.isLoading}
+          streamingStoryText={engine.streamingStoryText}
           isHistoryOpen={engine.isHistoryOpen}
           isReadingMode={engine.isReadingMode}
           onSelectChoice={engine.submitChoice}
@@ -40,13 +42,14 @@ function App() {
         onStartMenu={engine.returnToStartMenu}
         onNewGame={engine.quitAndStartNew}
       />
+      <GameOverModal gameOver={engine.gameState.gameOver ?? null} onNewGame={engine.quitAndStartNew} />
       <SettingsModal
         open={engine.isSettingsOpen}
         settings={engine.settings}
         onChange={engine.setSettings}
         onClose={() => engine.setIsSettingsOpen(false)}
       />
-      <LoadingOverlay visible={engine.isLoading} />
+      {/* <LoadingOverlay visible={engine.isLoading && !engine.streamingStoryText} /> */}
     </AppShell>
   )
 }

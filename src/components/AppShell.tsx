@@ -19,10 +19,10 @@ export function AppShell({ children, settings }: AppShellProps) {
 
   return (
     <div
-      className={`min-h-[calc(100svh - 200px)] overflow-x-hidden ${contrastClass} ${motionClass}`}
+      className={`min-h-svh overflow-x-hidden lg:h-svh lg:overflow-hidden ${contrastClass} ${motionClass}`}
     >
       <AmbientBackground />
-      <main className="relative mx-auto flex min-h-svh w-full max-w-370 px-4 py-5 sm:px-6 lg:px-8">
+      <main className="relative mx-auto flex min-h-svh w-full max-w-370 px-4 py-5 sm:px-6 lg:h-svh lg:min-h-0 lg:px-8">
         {children}
       </main>
     </div>

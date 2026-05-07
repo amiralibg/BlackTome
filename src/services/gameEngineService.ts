@@ -3,6 +3,8 @@ import { getArchetype } from '../data/archetypes'
 import type { CharacterDraft, Choice, EngineResult, GameState, PlayerStatsModel, SceneState, Settings } from '../types/game'
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
+const MAX_SCENE_TEXT_LENGTH = 900
+const MAX_AI_TOKENS = 520
 
 export const openingScene: SceneState = {
   id: 'opening-vault',
@@ -88,11 +90,17 @@ type AiAction = {
   text: string
 }
 
+type StreamHandlers = {
+  onStoryText?: (text: string) => void
+}
+
 const aiStoryEnginePrompt = `You are the story engine for Blacktome, a premium dark-fantasy text RPG with Dungeons & Dragons style narration.
 
 Write in clear, simple English that most players can understand. Use short sentences. Avoid rare words, purple prose, and confusing metaphors. Keep the dark-fantasy mood, but make every action and consequence easy to follow.
 
 Every scene must work like a playable game turn:
+- Keep the scene compact: 2 short paragraphs, 120 to 180 words total.
+- Do not repeat previous scene text, old dialogue, or the player's full action unless needed for clarity.
 - First resolve exactly what the player did. Show the character doing the action, then show the direct result.
 - Do not end on passive atmosphere only. The final paragraph must create a clear new problem, threat, clue, bargain, countdown, locked path, wounded ally, monster move, resource shortage, or moral choice.
 - The final sentence must push the player to act now. It should make the player feel they must choose a path or write their next action.
@@ -112,6 +120,11 @@ Run the campaign toward one of five possible endings, chosen naturally from the 
 3. Destroy the Blacktome and lose something important.
 4. Become trapped, cursed, or transformed by the Blacktome.
 5. Die or fall to madness after repeated bad choices or depleted stats.
+
+The campaign must not run forever:
+- By turn 18, clearly reveal the final objective and what ending is becoming likely.
+- By turn 22, push the player into a final confrontation, ritual, escape, or sacrifice.
+- By turn 25, write a decisive ending scene with no open-ended cliffhanger.
 
 Use health, energy, and sanity as real survival resources:
 - Dangerous physical harm should reduce health.
@@ -165,17 +178,122 @@ function safeJsonParse(content: string): EngineResult | null {
     const cleaned = content.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim()
     const parsed = JSON.parse(cleaned) as EngineResult
     if (!parsed.scene?.text || !Array.isArray(parsed.scene.choices)) return null
-    return parsed
+    return normalizeEngineResult(parsed)
   } catch {
     return null
   }
 }
 
-async function requestLiaraScene(settings: Settings, gameState: GameState, action: AiAction): Promise<EngineResult | null> {
+function trimSceneText(text: string) {
+  const normalized = text.replace(/\n{3,}/g, '\n\n').trim()
+  if (normalized.length <= MAX_SCENE_TEXT_LENGTH) return normalized
+
+  const sliced = normalized.slice(0, MAX_SCENE_TEXT_LENGTH)
+  const sentenceEnd = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('!'), sliced.lastIndexOf('?'))
+  return `${sliced.slice(0, sentenceEnd > 420 ? sentenceEnd + 1 : MAX_SCENE_TEXT_LENGTH).trim()}\n\nThe Blacktome forces the moment to a choice. Act now, before the page closes.`
+}
+
+function normalizeEngineResult(result: EngineResult): EngineResult {
+  return {
+    ...result,
+    scene: {
+      ...result.scene,
+      text: trimSceneText(result.scene.text),
+      choices: result.scene.choices.slice(0, 4),
+    },
+  }
+}
+
+function extractStreamingStoryText(content: string) {
+  const textKeyIndex = content.indexOf('"text"')
+  if (textKeyIndex === -1) return ''
+
+  const colonIndex = content.indexOf(':', textKeyIndex)
+  if (colonIndex === -1) return ''
+
+  const firstQuoteIndex = content.indexOf('"', colonIndex + 1)
+  if (firstQuoteIndex === -1) return ''
+
+  let escaped = false
+  let value = ''
+
+  for (let index = firstQuoteIndex + 1; index < content.length; index += 1) {
+    const character = content[index]
+
+    if (escaped) {
+      value += `\\${character}`
+      escaped = false
+      continue
+    }
+
+    if (character === '\\') {
+      escaped = true
+      continue
+    }
+
+    if (character === '"') break
+    value += character
+  }
+
+  try {
+    return JSON.parse(`"${value}"`) as string
+  } catch {
+    return value.replace(/\\n/g, '\n').replace(/\\"/g, '"')
+  }
+}
+
+async function readStreamingContent(response: Response, handlers?: StreamHandlers) {
+  if (!response.body) {
+    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+    return data.choices?.[0]?.message?.content ?? ''
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffered = ''
+  let content = ''
+  let lastPreview = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffered += decoder.decode(value, { stream: true })
+    const lines = buffered.split('\n')
+    buffered = lines.pop() ?? ''
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+
+      const data = trimmed.slice(5).trim()
+      if (!data || data === '[DONE]') continue
+
+      try {
+        const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string }, message?: { content?: string } }> }
+        const delta = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? ''
+        if (!delta) continue
+
+        content += delta
+        const preview = trimSceneText(extractStreamingStoryText(content))
+        if (preview && preview !== lastPreview) {
+          lastPreview = preview
+          handlers?.onStoryText?.(preview)
+        }
+      } catch {
+        continue
+      }
+    }
+  }
+
+  return content
+}
+
+async function requestLiaraScene(settings: Settings, gameState: GameState, action: AiAction, handlers?: StreamHandlers): Promise<EngineResult | null> {
   const config = resolveAiConfig(settings)
   if (!isAiConfigured(settings, config)) return null
 
-  const recentHistory = gameState.history.slice(-8).map((entry) => `${entry.type}: ${entry.text}`).join('\n---\n')
+  const recentHistory = gameState.history.slice(-4).map((entry) => `${entry.type}: ${entry.text.slice(0, 360)}`).join('\n---\n')
   const response = await fetch(`${config.apiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -185,6 +303,8 @@ async function requestLiaraScene(settings: Settings, gameState: GameState, actio
     body: JSON.stringify({
       model: config.aiModel,
       temperature: 0.85,
+      max_tokens: MAX_AI_TOKENS,
+      stream: true,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -211,14 +331,13 @@ async function requestLiaraScene(settings: Settings, gameState: GameState, actio
     throw new Error(`Liara AI request failed: ${response.status}`)
   }
 
-  const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-  const content = data.choices?.[0]?.message?.content
+  const content = await readStreamingContent(response, handlers)
   return content ? safeJsonParse(content) : null
 }
 
 async function mockChoice(choice: Choice): Promise<EngineResult> {
   await wait(950)
-  return choiceScenes[choice.id] ?? {
+  return normalizeEngineResult(choiceScenes[choice.id] ?? {
     scene: {
       id: `scene-${choice.id}`,
       text: `You choose to ${choice.label.toLowerCase()}. The Blacktome accepts the decision and the page darkens beneath your hand. Ink rises like smoke, forming a narrow passage of white arches and red lanterns.\n\nThe path ahead splits around a broken ward-stone. One route smells of blood, one hums with old magic, and one offers a moment to recover before the dark catches up. You need to decide how to move before the lanterns go out.`,
@@ -229,12 +348,12 @@ async function mockChoice(choice: Choice): Promise<EngineResult> {
       ],
     },
     playerPatch: { energy: Math.max(18, 62 - Math.floor(Math.random() * 9)), sanity: Math.max(20, 70 - Math.floor(Math.random() * 13)) },
-  }
+  })
 }
 
 async function mockCustomAction(input: string): Promise<EngineResult> {
   await wait(1100)
-  return {
+  return normalizeEngineResult({
     scene: {
       id: 'custom-action',
       text: `You act: ${input}. The chamber responds at once. The Blacktome writes around your choice, changing the room to match what you tried to do. Shadows shift, old mechanisms wake, and the result becomes clear.\n\nYour action opens a way forward, but it also draws attention. A bell rings under the floor, and something begins climbing toward the observatory from below. You have only a few breaths to choose your next move.`,
@@ -245,7 +364,7 @@ async function mockCustomAction(input: string): Promise<EngineResult> {
       ],
     },
     playerPatch: { energy: 55, sanity: 66 },
-  }
+  })
 }
 
 export const gameEngineService = {
@@ -254,18 +373,18 @@ export const gameEngineService = {
     return { scene: openingScene, playerPatch: createPlayerFromDraft(draft) }
   },
 
-  async submitChoice(choice: Choice, gameState: GameState, settings: Settings): Promise<EngineResult> {
+  async submitChoice(choice: Choice, gameState: GameState, settings: Settings, handlers?: StreamHandlers): Promise<EngineResult> {
     try {
-      const aiResult = await requestLiaraScene(settings, gameState, { type: 'choice', text: choice.label })
+      const aiResult = await requestLiaraScene(settings, gameState, { type: 'choice', text: choice.label }, handlers)
       return aiResult ?? mockChoice(choice)
     } catch {
       return mockChoice(choice)
     }
   },
 
-  async submitCustomAction(input: string, gameState: GameState, settings: Settings): Promise<EngineResult> {
+  async submitCustomAction(input: string, gameState: GameState, settings: Settings, handlers?: StreamHandlers): Promise<EngineResult> {
     try {
-      const aiResult = await requestLiaraScene(settings, gameState, { type: 'custom', text: input })
+      const aiResult = await requestLiaraScene(settings, gameState, { type: 'custom', text: input }, handlers)
       return aiResult ?? mockCustomAction(input)
     } catch {
       return mockCustomAction(input)

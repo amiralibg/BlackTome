@@ -17,7 +17,7 @@ type ActionControlsProps = {
 
 export function DesktopActionPanel({ choices, activeMode, showWriteMode, isLoading, onModeChange, onSelectChoice, onSubmitCustomAction }: ActionControlsProps) {
   return (
-    <div className="sticky bottom-3 z-20 hidden animate-slide-up rounded-2xl backdrop-blur-2xl lg:block">
+    <div className="z-20 hidden shrink-0 animate-slide-up rounded-2xl backdrop-blur-2xl lg:block">
       {showWriteMode && (
         <div className="mb-2 flex items-center gap-2 rounded-2xl border border-stone-200/8 px-3 py-2.5">
           <ModeButton active={activeMode === 'paths'} onClick={() => onModeChange('paths')} tone="paths">
